@@ -149,7 +149,7 @@ static inline FILE *load_image_file(
 	{
 		seek_file(file, 0, SEEK_END);
 
-		*file_size_ptr = (size_t)ftell(file);
+		*file_size_ptr = (size_t)tell_file(file);
 
 		seek_file(file, 0, SEEK_SET);
 	}
@@ -457,19 +457,23 @@ static inline uint64_t evaluate_de_content_size_big_tif(
 	return size;
 }
 
-#define value_consistency_check_big_tif(data, type, content_buffer, count)\
-	(data) = ((type *)content_buffer)[0];\
-	for (uint64_t i = 1; i != (count); ++i)\
+#define color_depth_accumulate_big_tif(type, content_buffer, count, color_depth, is_same_endian)\
+	for (uint64_t i = 0; i != (count); ++i)\
 	{\
 		type value = ((type *)content_buffer)[i];\
-		if(value != (data))\
+		if(is_same_endian == false)\
 		{\
-			valid_value = false;\
-			break;\
+			if(sizeof(type) == 2)\
+				change_endian_16_bit(&value);\
+			else if(sizeof(type) == 4)\
+				change_endian_32_bit(&value);\
+			else if(sizeof(type) == 8)\
+				change_endian_64_bit(&value);\
 		}\
+		color_depth += (uint16_t)value;\
 	}
 
-static inline bool resolve_bits_per_sample_big_tif(
+static inline void resolve_bits_per_sample_big_tif(
 	Image_Info *info,
 	uint16_t data_type,
 	uint64_t count,
@@ -478,107 +482,39 @@ static inline bool resolve_bits_per_sample_big_tif(
 {
 	bool valid_value = true;
 
-	uint64_t bits_per_sample = 0;
-
-	union
-	{
-		uint8_t 	ui_8;
-		uint16_t 	ui_16;
-		uint32_t 	ui_32;
-		uint64_t	ui_64;
-		int8_t 		i_8;
-		int16_t 	i_16;
-		int32_t 	i_32;
-		int64_t		i_64;
-	} data;
+	uint16_t color_depth = 0;
 
 	switch (data_type) 
 	{
 		case IHR_DE_TYPE_BYTE:
-			value_consistency_check_big_tif(data.ui_8, uint8_t, content_buffer, count)
-
-			if(valid_value == true)
-				bits_per_sample = data.ui_8;
+			color_depth_accumulate_big_tif(uint8_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SHORT:
-			value_consistency_check_big_tif(data.ui_16, uint16_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_16_bit(&data.ui_16);
-
-				bits_per_sample = data.ui_16;
-			}
+			color_depth_accumulate_big_tif(uint16_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_LONG:
-			value_consistency_check_big_tif(data.ui_32, uint32_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_32_bit(&data.ui_32);
-
-				bits_per_sample = data.ui_32;
-			}
+			color_depth_accumulate_big_tif(uint32_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_LONG8:
-			value_consistency_check_big_tif(data.ui_64, uint64_t, content_buffer, count)
-			
-			if(valid_value == true)
-			{
-				bits_per_sample = data.ui_64;
-
-				if(is_same_endian == false)
-					change_endian_64_bit(&bits_per_sample);
-			}
+			color_depth_accumulate_big_tif(uint64_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SBYTE:
-			value_consistency_check_big_tif(data.i_8, int8_t, content_buffer, count)
-
-			if(valid_value == true)
-				bits_per_sample = (uint64_t)data.i_8;
+			color_depth_accumulate_big_tif(int8_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SSHORT:
-			value_consistency_check_big_tif(data.i_16, int16_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_16_bit(&data.i_16);
-
-				bits_per_sample = (uint64_t)data.i_16;
-			}
+			color_depth_accumulate_big_tif(int16_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SLONG:
-			value_consistency_check_big_tif(data.i_32, int32_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_32_bit(&data.i_32);
-
-				bits_per_sample = (uint64_t)data.i_32;
-			}
+			color_depth_accumulate_big_tif(int32_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SLONG8:
-			value_consistency_check_big_tif(data.i_64, int64_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_64_bit(&data.i_64);
-
-				bits_per_sample = (uint64_t)data.i_64;
-			}
+			color_depth_accumulate_big_tif(int64_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		default:
 		break;
 	}
 
-	info->_color_depth = (uint16_t)bits_per_sample;
-
-	return valid_value;
+	info->_color_depth = color_depth;
 }
 
 static inline bool resolve_de_content_buffer_big_tif(
@@ -626,15 +562,9 @@ static inline bool resolve_de_content_buffer_big_tif(
 			}
 			else
 			{
-				if(resolve_bits_per_sample_big_tif(info, data_type, count, content_ptr, is_same_endian) == true)
-					info->_channels = (uint16_t)count;
-				else
-				{
-					//The channels have inconsistent bit depth, emit an error.
-					printf("error in tif : the channels have inconsistent bit depth.");
+				resolve_bits_per_sample_big_tif(info, data_type, count, content_ptr, is_same_endian);
 
-					valid_content = false;
-				}
+				info->_channels = (uint16_t)count;
 			}
 		break;
 		case IHR_TIF_TAG_SAMPLES_PER_PIXEL :
@@ -772,8 +702,19 @@ static bool resolve_big_tif(
 
 					content_buffer = (uint8_t *)malloc(content_size);
 
+					if(content_buffer == NULL)
+					{
+						perror("");//Run out of memory.
+
+						entry_resolve_success = false;
+
+						break;
+					}
+
 					content_buffer_prev_size = content_size;
 				}
+
+				content_ptr = content_buffer;
 
 				uint64_t content_real_pos = convert_de_content_big_tif(*data_type, content, is_same_endian);
 
@@ -983,104 +924,57 @@ static inline uint32_t evaluate_de_content_size_normal_tif(
 	return size;
 }
 
-#define value_consistency_check_normal_tif(data, type, content_buffer, count)\
-	(data) = ((type *)content_buffer)[0];\
-	for (uint32_t i = 1; i != (count); ++i)\
+#define color_depth_accumulate_normal_tif(type, content_buffer, count, color_depth, is_same_endian)\
+	for (uint32_t i = 0; i != (count); ++i)\
 	{\
 		type value = ((type *)content_buffer)[i];\
-		if(value != (data))\
+		if(is_same_endian == false)\
 		{\
-			valid_value = false;\
-			break;\
+			if(sizeof(type) == 2)\
+				change_endian_16_bit(&value);\
+			else if(sizeof(type) == 4)\
+				change_endian_32_bit(&value);\
+			else if(sizeof(type) == 8)\
+				change_endian_64_bit(&value);\
 		}\
+		color_depth += (uint16_t)value;\
 	}
+		
 
-static inline bool resolve_bits_per_sample_normal_tif(
+static inline void resolve_bits_per_sample_normal_tif(
 	Image_Info *info,
 	uint16_t data_type,
 	uint32_t count,
 	uint8_t *content_buffer,
 	bool is_same_endian)
 {
-	bool valid_value = true;
-
-	uint32_t bits_per_sample = 0;
-
-	union
-	{
-		uint8_t 	ui_8;
-		uint16_t 	ui_16;
-		uint32_t 	ui_32;
-		int8_t 		i_8;
-		int16_t 	i_16;
-		int32_t 	i_32;
-	} data;
+	uint16_t color_depth = 0;
 
 	switch (data_type) 
 	{
 		case IHR_DE_TYPE_BYTE:
-			value_consistency_check_normal_tif(data.ui_8, uint8_t, content_buffer, count)
-
-			if(valid_value == true)
-				bits_per_sample = data.ui_8;
+			color_depth_accumulate_normal_tif(uint8_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SHORT:
-			value_consistency_check_normal_tif(data.ui_16, uint16_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_16_bit(&data.ui_16);
-
-				bits_per_sample = data.ui_16;
-			}
+			color_depth_accumulate_normal_tif(uint16_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_LONG:
-			value_consistency_check_normal_tif(data.ui_32, uint32_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				bits_per_sample = data.ui_32;
-
-				if(is_same_endian == false)
-					change_endian_32_bit(&bits_per_sample);
-			}
+			color_depth_accumulate_normal_tif(uint32_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SBYTE:
-			value_consistency_check_normal_tif(data.i_8, int8_t, content_buffer, count)
-
-			if(valid_value == true)
-				bits_per_sample = (uint32_t)data.i_8;
+			color_depth_accumulate_normal_tif(int8_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SSHORT:
-			value_consistency_check_normal_tif(data.i_16, int16_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_16_bit(&data.i_16);
-
-				bits_per_sample = (uint32_t)data.i_16;
-			}
+			color_depth_accumulate_normal_tif(int16_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		case IHR_DE_TYPE_SLONG:
-			value_consistency_check_normal_tif(data.i_32, int32_t, content_buffer, count)
-
-			if(valid_value == true)
-			{
-				if(is_same_endian == false)
-					change_endian_32_bit(&data.i_32);
-
-				bits_per_sample = (uint32_t)data.i_32;
-			}
+			color_depth_accumulate_normal_tif(int32_t, content_buffer, count, color_depth, is_same_endian)
 		break;
 		default:
 		break;
 	}
 
-	info->_color_depth = (uint16_t)bits_per_sample;
-
-	return valid_value;
+	info->_color_depth = color_depth;
 }
 
 static inline bool resolve_de_content_buffer_normal_tif(
@@ -1128,15 +1022,9 @@ static inline bool resolve_de_content_buffer_normal_tif(
 			}
 			else
 			{
-				if(resolve_bits_per_sample_normal_tif(info, data_type, count, content_ptr, is_same_endian) == true)
-					info->_channels = (uint16_t)count;
-				else
-				{
-					//The channels have inconsistent bit depth, emit an error.
-					printf("error in tif : the channels have inconsistent bit depth.");
+				resolve_bits_per_sample_normal_tif(info, data_type, count, content_ptr, is_same_endian);
 
-					valid_content = false;
-				}
+				info->_channels = (uint16_t)count;
 			}
 		break;
 		case IHR_TIF_TAG_SAMPLES_PER_PIXEL :
@@ -1274,8 +1162,19 @@ static bool resolve_normal_tif(
 
 					content_buffer = (uint8_t *)malloc(content_size);
 
+					if(content_buffer==NULL)
+					{
+						perror("");//Run out of memory.
+
+						entry_resolve_success = false;
+
+						break;
+					}
+
 					content_buffer_prev_size = content_size;
 				}
+
+				content_ptr = content_buffer;
 
 				uint32_t content_real_pos = convert_de_content_normal_tif(*data_type, content, is_same_endian);
 
@@ -1398,7 +1297,7 @@ static bool resolve_tif(
 
 		uint64_t first_ifd_pos = 0;
 
-		if(fread(&first_ifd_pos, 8, 1, file)!=1)
+		if(fread(&first_ifd_pos, sizeof(uint64_t), 1, file) != 1)
 			return false;
 
 		if(is_same_endian == false)
