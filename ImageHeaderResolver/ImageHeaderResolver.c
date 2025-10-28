@@ -1584,8 +1584,12 @@ bool get_image_info(
 	FILE *file = load_image_file(&image_info->_file_size, img_path);
 
 	if (file == NULL || image_info->_file_size == 0ULL)
+	{
+		terminate(file);
+		
 		return false;
-
+	}
+	
 	//We do not want to close the file in every return point of the entry
 	//function, so we put the resolving operations into another function.
 	bool success = resolve_image_file(file, image_info);
