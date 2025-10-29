@@ -1583,7 +1583,10 @@ bool get_image_info(
 
 	FILE *file = load_image_file(&image_info->_file_size, img_path);
 
-	if (file == NULL || image_info->_file_size == 0ULL)
+	if (file == NULL)
+		return false;
+	
+	if(image_info->_file_size == 0ULL)
 	{
 		terminate(file);
 		
