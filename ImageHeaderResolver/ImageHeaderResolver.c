@@ -259,7 +259,7 @@ static bool resolve_jpeg(
 		//Todo: read all SOF0-SOF3 data.
 		uint8_t sof0[8];
 
-		if(fread(sof0,1,8,file) != 8)
+		if(fread(sof0, 1, 8, file) != 8)
 			break;
 
 		info->_color_depth = *(uint8_t *)(sof0 + 2);
@@ -797,14 +797,15 @@ static bool resolve_big_tif(
 		if(is_same_endian == false)
 			change_endian_64_bit(&next_ifd_pos);
 
-		if(seek_file(file, (int64_t)next_ifd_pos, SEEK_CUR) != 0)
+		if(seek_file(file, (int64_t)next_ifd_pos, SEEK_SET) != 0)
 		{
 			success = false;
 
 			break;
 		}
-
-	}while(next_ifd_pos != 0);
+	//If the next ifd position is 0 or an invalid value(locate out of file),
+	//stop traversing the ifd list.
+	} while(next_ifd_pos != 0 && next_ifd_pos < info->_file_size);
 
 	//Deallocate the buffers last used.
 	if(entry_list_buffer != NULL)
@@ -1086,7 +1087,7 @@ static bool resolve_normal_tif(
 		if (is_same_endian == false)
 			change_endian_32_bit(&entry_count);
 
-		//Every directory entry of big tif file is 20 byte.
+		//Every directory entry of normal tif file is 12 byte.
 		uint32_t current_buffer_size = 12 * entry_count;
 
 		//Previous buffer is not allocated or is not big enough to store current entry lists.
@@ -1122,7 +1123,7 @@ static bool resolve_normal_tif(
 
 		uint8_t *buffer_cpy = entry_list_buffer;
 
-		bool is_single_page = false;
+		bool is_single_page = true;
 
 		bool entry_resolve_success = true;
 
@@ -1204,7 +1205,11 @@ static bool resolve_normal_tif(
 		}
 
 		//An ifd is resolved, check result.
-		if(is_single_page == true && is_image_info_valid(&current_page) == false)
+		if(is_single_page == true && (
+		   	current_page._width == 0 ||
+		    current_page._height == 0 ||
+			current_page._color_depth == 0 ||
+			current_page._channels == 0))
 		{
 			//Should be a valid image page, but the result is invalid, abort resolving.
 			success = false;
@@ -1253,14 +1258,15 @@ static bool resolve_normal_tif(
 		if(is_same_endian == false)
 			change_endian_32_bit(&next_ifd_pos);
 
-		if(seek_file(file, (int64_t)next_ifd_pos, SEEK_CUR) != 0)
+		if(seek_file(file, (int64_t)next_ifd_pos, SEEK_SET) != 0)
 		{
 			success = false;
 
 			break;
 		}
-
-	} while(next_ifd_pos != 0);
+	//If the next ifd position is 0 or an invalid value(locate out of file),
+	//stop traversing the ifd list.
+	} while(next_ifd_pos != 0 && next_ifd_pos < info->_file_size);
 
 	//Deallocate the buffers last used.
 	if(entry_list_buffer != NULL)
@@ -1585,7 +1591,7 @@ bool get_image_info(
 
 	if (file == NULL)
 		return false;
-	
+
 	if(image_info->_file_size == 0ULL)
 	{
 		terminate(file);
