@@ -1,4 +1,4 @@
-#include "Image_Header.hpp"
+#include "ImageHeader.hpp"
 #include <iostream>
 #include <string>
 #include <chrono>

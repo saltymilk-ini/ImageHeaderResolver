@@ -1,4 +1,4 @@
-#include "Image_Header.hpp"
+#include "ImageHeader.hpp"
 #include "ImageHeaderResolver.h"
 
 class Image_Header::Image_Header_Impl
