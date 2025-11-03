@@ -125,7 +125,8 @@ static Format resolve_image_format(FILE *file)
 		return IHR_FMT_PNG;
 	else if ((buffer[1] == 0 || buffer[1] == 1) /*color map type*/&& 
 	(buffer[2] == 1 || buffer[2] == 2 || buffer[2] == 3 ||
-	 buffer[2] == 9 || buffer[2] == 10 || buffer[2] == 11) /*image type*/&& 
+	 buffer[2] == 9 || buffer[2] == 10 || buffer[2] == 11||
+	 buffer[2] == 32 || buffer[2] == 33) /*image type*/&& 
 	(buffer[16] == 8 || buffer[16] == 15 || buffer[16] == 16 || buffer[16] == 24 || buffer[16] == 32)/*bits per pixel*/)
 		return IHR_FMT_TGA;
 	else
@@ -166,12 +167,39 @@ static bool resolve_jpeg(
 		if(byte == 0x00)
 			continue;
 
-		//The EOI(aka End Of Image) symbol mark.
-		if(byte == 0xd9)
+		//The SOS(aka Start Of Scan) or EOI(aka End Of Image) symbol mark.
+		if(byte == 0xda || byte == 0xd9)
 			break;
 
-		//The symbol is not SOF0, we just read it's length and skip it.
-		if(byte != 0xc0)
+		/*
+		SOF(aka Start Of Frame) segment.
+
+		|  Mark  | Name  | Description                              |
+		| 0xFFC0 | SOF0  | most used                                |
+		| 0xFFC1 | SOF1  | almost never used                        |
+		| 0XFFC2 | SOF2  | rarely used                              |
+		| 0xFFC3 | SOF3  | almost never used                        |
+		| 0xFFC4 | DHT   | not a SOF mark(aka Define Huffman Table) |
+		| 0XFFC5 | SOF5  | almost never used                        |
+		| 0XFFC6 | SOF6  | almost never used                        |
+		| 0XFFC7 | SOF7  | almost never used                        |
+		| 0xFFC8 | SOF8  | reserved, almost never used              |
+		| 0XFFC9 | SOF9  | almost never used                        |
+		| 0XFFCA | SOF10 | almost never used                        |
+		| 0xFFCB | SOF11 | almost never used                        |
+		| 0xFFCC | SOF12 | reserved, almost never used              |
+		| 0xFFCD | SOF13 | almost never used                        |
+		| 0xFFCE | SOF14 | almost never used                        |
+		| 0xFFCF | SOF15 | almost never used                        |
+
+		A jpeg image file can contain only one top-level SOF segment,
+		which stores the basic information of the main image.
+		Additional SOF segments may be nested within APP segments to
+		define thumbnails.
+		So theoretically, we just need to resolve the first top-level
+		SOF(0-15, except 4).
+		*/
+		if((byte & 0xf0) != 0xc0 || byte == 0xc4)
 		{
 			uint16_t length = 0;
 
@@ -187,25 +215,15 @@ static bool resolve_jpeg(
 			continue;
 		}
 
-		//Read SOF0(aka Start Of Frame 0) symbol.
-		//In most circumstances, the information of the first SOF0 symbol is
-		//what we need.
-		//But a jepg image file may contain several SOF0-SOF3 data, some of
-		//then store the thumbnail information.
-		//So, for more accuracy, we should go through all SOF0-SOF3 symbols
-		//in a jepg image file, then select the biggest width, height, color
-		//depth and channels as the final result.
-		//For now, we just read the first SOF0, later optimization is needed.
-		//Todo: read all SOF0-SOF3 data.
-		uint8_t sof0[8];
+		uint8_t sof[8];
 
-		if(fread(sof0, 1, 8, file) != 8)
+		if(fread(sof, 1, 8, file) != 8)
 			break;
 
-		info->_color_depth = *(uint8_t *)(sof0 + 2);
-		info->_height = *(uint16_t *)(sof0 + 3);
-		info->_width = *(uint16_t *)(sof0 + 5);
-		info->_channels=*(uint8_t *)(sof0 + 7);
+		info->_color_depth = *(uint8_t *)(sof + 2);
+		info->_height = *(uint16_t *)(sof + 3);
+		info->_width = *(uint16_t *)(sof + 5);
+		info->_channels=*(uint8_t *)(sof + 7);
 
 		if(is_same_endian == false)
 		{
@@ -213,7 +231,7 @@ static bool resolve_jpeg(
 			change_endian_16_bit(&info->_height);
 		}
 
-		//Stop resolving when the first SOF0 is read.
+		//Stop resolving when the first top-level SOF segment is read.
 		break;
 	}
 
@@ -421,7 +439,8 @@ static bool resolve_tga(
 	switch(color_depth)
 	{
 		case 8://grey scale
-			if(alpha_bits != 0)
+			if(alpha_bits != 0/*ordinary format*/ &&
+			   alpha_bits != 8/*special format, just an alpha mask*/)
 				valid_data = false;
 			else 
 				info->_channels = 1;
